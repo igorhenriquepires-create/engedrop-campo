@@ -13,6 +13,19 @@ const syncOrder: Record<SyncEntity, number> = {
   clients: 0, properties: 1, fields: 2, visits: 3, evaluations: 4, photos: 5, reports: 6
 }
 
+function syncErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message
+  if (error && typeof error === 'object') {
+    const details = error as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown }
+    const message = typeof details.message === 'string' ? details.message : ''
+    const detail = typeof details.details === 'string' && details.details ? ` (${details.details})` : ''
+    const hint = typeof details.hint === 'string' && details.hint ? ` ${details.hint}` : ''
+    if (message) return `${message}${detail}${hint}`
+    if (typeof details.code === 'string') return `Código do banco: ${details.code}`
+  }
+  return 'Erro de sincronização desconhecido'
+}
+
 const tableFor = (entity: SyncEntity) => ({
   clients: db.clients, properties: db.properties, fields: db.fields, visits: db.visits,
   evaluations: db.evaluations, photos: db.photos, reports: db.reports
@@ -90,7 +103,7 @@ export async function syncNow(): Promise<SyncResult> {
       if (item.id) await db.syncQueue.delete(item.id)
       completed++
     } catch (error) {
-      const reason = error instanceof Error ? error.message : 'Erro de sincronização desconhecido'
+      const reason = syncErrorMessage(error)
       if (item.id) await db.syncQueue.update(item.id, { attempts: item.attempts + 1, lastError: reason })
       return { ok: false, message: `Falha ao enviar ${item.entity}: ${reason}`, pending: await db.syncQueue.count() }
     }
