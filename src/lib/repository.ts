@@ -23,11 +23,16 @@ async function queue(entity: SyncEntity, entityId: string) {
   else await db.syncQueue.add({ entity, entityId, action: 'upsert', createdAt: now(), attempts: 0 })
 }
 
+function requestSync() {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event('engedrop:sync-request'))
+}
+
 export async function saveEntity(entity: SyncEntity, value: NewEntity<EntityBase>): Promise<EntityBase> {
   // A shared persistence path keeps every locally written record queued for sync.
   const record = toEntity(value as NewEntity<EntityBase>)
   await (entityTables[entity] as any).put(record)
   await queue(entity, record.id)
+  requestSync()
   return record
 }
 
@@ -52,6 +57,7 @@ export async function saveVisitBundle(bundle: VisitBundle) {
       await queue('photos', photo.id)
     }
   })
+  requestSync()
 }
 
 export async function getVisitBundle(visitId: string): Promise<VisitBundle | undefined> {
@@ -68,6 +74,7 @@ export async function removePhoto(id: string) {
   const payload: SyncQueueItem = { entity: 'photos', entityId: id, action: 'delete', createdAt: now(), attempts: 0 }
   if (current?.id) await db.syncQueue.update(current.id, payload)
   else await db.syncQueue.add(payload)
+  requestSync()
 }
 
 export async function removeEvaluation(id: string) {
@@ -86,6 +93,7 @@ export async function removeEvaluation(id: string) {
     if (current?.id) await db.syncQueue.update(current.id, payload)
     else await db.syncQueue.add(payload)
   })
+  requestSync()
 }
 
 export async function dashboardData() {

@@ -27,15 +27,32 @@ function AppShell() {
   }, [])
 
   useEffect(() => {
-    const onOnline = async () => {
-      if (supabaseConfigured) {
+    if (!supabaseConfigured) return
+    let disposed = false
+    let syncing = false
+    const synchronize = async (notify = false) => {
+      if (disposed || syncing) return
+      syncing = true
+      try {
         const result = await syncNow()
-        refresh()
-        if (result.ok && result.pending === 0) toast('Conexão restabelecida. Dados sincronizados.')
-      }
+        if (result.ok) {
+          refresh()
+          if (notify && result.pending === 0) toast('Conexão restabelecida. Dados sincronizados.')
+        }
+      } finally { syncing = false }
     }
+    const onOnline = () => { void synchronize(true) }
+    const onRequest = () => { void synchronize() }
     window.addEventListener('online', onOnline)
-    return () => window.removeEventListener('online', onOnline)
+    window.addEventListener('engedrop:sync-request', onRequest)
+    void synchronize()
+    const interval = window.setInterval(onRequest, 30000)
+    return () => {
+      disposed = true
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener('engedrop:sync-request', onRequest)
+      window.clearInterval(interval)
+    }
   }, [refresh, toast])
 
   return <AppContext.Provider value={{ version, refresh, toast }}>
