@@ -181,6 +181,21 @@ $$;
 drop policy if exists profiles_read_own on public.profiles;
 create policy profiles_read_own on public.profiles for select to authenticated using (id = auth.uid());
 
+-- RLS defines which rows a staff member may access; these grants allow the
+-- authenticated application role to reach the tables at all.  Without them
+-- PostgREST returns "permission denied for table" before evaluating RLS.
+grant usage on schema public to authenticated;
+grant select on table public.profiles to authenticated;
+grant select, insert, update, delete on table
+  public.clients,
+  public.properties,
+  public.fields,
+  public.visits,
+  public.evaluations,
+  public.photos,
+  public.reports
+to authenticated;
+
 -- Buckets are private: files are obtained through authenticated storage requests only.
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values
