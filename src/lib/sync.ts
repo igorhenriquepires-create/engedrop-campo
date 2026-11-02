@@ -55,7 +55,16 @@ async function uploadAsset(entity: 'photos' | 'reports', record: VisitPhoto | Re
   const extension = record.filename.split('.').pop() || (entity === 'photos' ? 'jpg' : 'pdf')
   const bucket = entity === 'photos' ? 'visit-photos' : 'visit-reports'
   const path = `${userId}/${record.id}.${extension}`
-  const { error } = await supabase.storage.from(bucket).upload(path, record.blob, { upsert: true, contentType: record.blob.type || undefined })
+  // iOS can persist a File wrapper in IndexedDB that loses its backing body
+  // between the camera sheet and a later background sync.  Sending the actual
+  // bytes (rather than the wrapper) works across Safari/PWA and prevents an
+  // empty attachment from blocking the visit, client and evaluations.
+  const body = await record.blob.arrayBuffer()
+  if (!body.byteLength) return undefined
+  const { error } = await supabase.storage.from(bucket).upload(path, body, { upsert: true, contentType: record.blob.type || undefined })
+  // A body-less camera file is kept in IndexedDB for the technician. Metadata
+  // still synchronizes below, so a single bad asset never blocks the visit.
+  if (error && /no content provided/i.test(error.message)) return undefined
   if (error) throw error
   await (entity === 'photos' ? db.photos : db.reports).update(record.id, { storagePath: path, updatedAt: now() } as any)
   return path

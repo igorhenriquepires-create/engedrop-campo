@@ -59,6 +59,16 @@ const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
   reader.readAsDataURL(blob)
 })
 
+async function imageDimensions(blob: Blob) {
+  const url = URL.createObjectURL(blob)
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image(); element.onload = () => resolve(element); element.onerror = reject; element.src = url
+    })
+    return { width: image.naturalWidth || 4, height: image.naturalHeight || 3 }
+  } finally { URL.revokeObjectURL(url) }
+}
+
 export async function createVisitPdf(context: ReportContext): Promise<Blob> {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   const company = import.meta.env.VITE_COMPANY_NAME || 'Engedrop'
@@ -90,16 +100,31 @@ export async function createVisitPdf(context: ReportContext): Promise<Blob> {
     text(`${index + 1}. ${fieldFor(context, evaluation)?.name ?? 'Avaliação'}`, 13, 'bold', [8, 116, 67])
     for (const line of evaluationLines(context, evaluation)) text(line)
     const photos = context.photos.filter(photo => photo.evaluationId === evaluation.id).sort((a, b) => a.position - b.position)
-    for (const photo of photos) {
-      if (!photo.blob) continue
-      try {
+    for (let photoIndex = 0; photoIndex < photos.length; photoIndex += 2) {
+      const pair = photos.slice(photoIndex, photoIndex + 2).filter(photo => photo.blob)
+      if (!pair.length) continue
+      const captionHeight = pair.some(photo => photo.caption) ? 9 : 0
+      const imageHeight = 58
+      ensure(imageHeight + captionHeight + 5)
+      const gap = 5
+      const imageWidth = (pageWidth - 30 - gap) / 2
+      for (const [column, photo] of pair.entries()) {
+        if (!photo.blob) continue
+        const x = 15 + column * (imageWidth + gap)
         const dataUrl = await blobToDataUrl(photo.blob)
-        ensure(65)
+        const dimensions = await imageDimensions(photo.blob)
+        const ratio = dimensions.width / dimensions.height
+        let drawWidth = imageWidth
+        let drawHeight = imageHeight
+        if (ratio > imageWidth / imageHeight) drawHeight = imageWidth / ratio
+        else drawWidth = imageHeight * ratio
+        const drawX = x + (imageWidth - drawWidth) / 2
+        const drawY = y + (imageHeight - drawHeight) / 2
         const imageFormat = photo.mimeType.toLowerCase().includes('png') ? 'PNG' : 'JPEG'
-        doc.addImage(dataUrl, imageFormat, 15, y, 85, 57, undefined, 'FAST')
-        if (photo.caption) { doc.setTextColor(80, 90, 84); doc.setFontSize(8); doc.text(doc.splitTextToSize(photo.caption, 85), 15, y + 61) }
-        y += photo.caption ? 70 : 63
-      } catch { /* a report remains useful even if an image is unreadable */ }
+        try { doc.addImage(dataUrl, imageFormat, drawX, drawY, drawWidth, drawHeight, undefined, 'FAST') } catch { continue }
+        if (photo.caption) { doc.setTextColor(80, 90, 84); doc.setFontSize(8); doc.text(doc.splitTextToSize(photo.caption, imageWidth), x, y + imageHeight + 4) }
+      }
+      y += imageHeight + captionHeight + 5
     }
   }
   const pages = doc.getNumberOfPages()
