@@ -66,8 +66,26 @@ async function uploadAsset(entity: 'photos' | 'reports', record: VisitPhoto | Re
   // still synchronizes below, so a single bad asset never blocks the visit.
   if (error && /no content provided/i.test(error.message)) return undefined
   if (error) throw error
-  await (entity === 'photos' ? db.photos : db.reports).update(record.id, { storagePath: path, updatedAt: now() } as any)
+  // Safari can reject writing a previously persisted PDF/File wrapper back to
+  // IndexedDB. The asset is already safe in private Storage, so cache failure
+  // must never stop the visit's metadata from reaching the cloud.
+  try {
+    await (entity === 'photos' ? db.photos : db.reports).update(record.id, { storagePath: path, updatedAt: now() } as any)
+  } catch (error) {
+    console.warn(`Could not refresh local ${entity} cache after upload`, error)
+  }
   return path
+}
+
+async function markSynced(entity: SyncEntity, table: ReturnType<typeof tableFor>, recordId: string) {
+  try {
+    await table.update(recordId, { syncState: 'synced' } as any)
+  } catch (error) {
+    // This only affects the local binary cache on some iOS WebKit versions.
+    // The authoritative database row has already been saved successfully.
+    if (entity !== 'photos' && entity !== 'reports') throw error
+    console.warn(`Could not mark local ${entity} cache as synced`, error)
+  }
 }
 
 async function syncQueueItem(item: SyncQueueItem, userId: string) {
@@ -88,7 +106,7 @@ async function syncQueueItem(item: SyncQueueItem, userId: string) {
   }
   const { error } = await remote.upsert(toRemote(entity, record), { onConflict: 'id' })
   if (error) throw error
-  await table.update(record.id, { syncState: 'synced' } as any)
+  await markSynced(entity, table, record.id)
 }
 
 export async function pendingSyncCount() { return db.syncQueue.count() }
