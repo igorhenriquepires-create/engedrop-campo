@@ -59,6 +59,12 @@ const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
   reader.readAsDataURL(blob)
 })
 
+async function bundledLogoDataUrl() {
+  const response = await fetch(`${import.meta.env.BASE_URL}engedrop-logo-white.png`)
+  if (!response.ok) throw new Error('Logomarca indisponível')
+  return blobToDataUrl(await response.blob())
+}
+
 async function imageDimensions(blob: Blob) {
   const url = URL.createObjectURL(blob)
   try {
@@ -88,6 +94,9 @@ export async function createVisitPdf(context: ReportContext): Promise<Blob> {
   doc.setFillColor(8, 116, 67); doc.roundedRect(15, 12, pageWidth - 30, 24, 4, 4, 'F')
   doc.setFont('helvetica', 'bold'); doc.setFontSize(20); doc.setTextColor(255, 255, 255); doc.text(company.toUpperCase(), 21, 23)
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.text('RELATÓRIO DE VISITA TÉCNICA', 21, 30)
+  // Use the same official asset displayed by the PWA. If it cannot be loaded
+  // (for example on a first offline PDF), the company name remains the header.
+  try { doc.addImage(await bundledLogoDataUrl(), 'PNG', pageWidth - 56, 16, 38, 15, undefined, 'FAST') } catch { /* text header is the safe fallback */ }
   y = 46
   text(`Cliente: ${context.client.name}`, 12, 'bold')
   text(`Data da visita: ${dateLabel(context.visit.date)}${context.visit.season ? `   •   Safra: ${context.visit.season}` : ''}`)
