@@ -8,3 +8,4 @@ build-result.txt
 test-result.txt
 dev-server.txt
 repair-dependency.txt
+.netlify
