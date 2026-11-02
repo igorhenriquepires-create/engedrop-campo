@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { background: #f5faf6; }
+  body { @apply m-0 min-h-screen bg-[#f5faf6] font-sans text-slate-800 antialiased; }
+  button, input, select, textarea { font: inherit; }
+  input[type='number'] { appearance: textfield; }
+  input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { appearance: none; margin: 0; }
+}
+
+@layer components {
+  .card { @apply rounded-2xl border border-emerald-950/5 bg-white p-4 shadow-soft sm:p-5; }
+  .label { @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500; }
+  .input { @apply w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-brand-500 focus:ring-4 focus:ring-brand-100; }
+  .select { @apply input appearance-none; }
+  .btn { @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition focus:outline-none focus:ring-4 disabled:cursor-not-allowed disabled:opacity-50; }
+  .btn-primary { @apply btn bg-brand-600 text-white hover:bg-brand-700 focus:ring-brand-200; }
+  .btn-secondary { @apply btn border border-brand-200 bg-white text-brand-700 hover:bg-brand-50 focus:ring-brand-100; }
+  .btn-ghost { @apply btn text-slate-600 hover:bg-slate-100 focus:ring-slate-200; }
+  .nav-link { @apply flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-slate-600 transition hover:bg-brand-50 hover:text-brand-700; }
+  .nav-link-active { @apply bg-brand-600 text-white hover:bg-brand-600 hover:text-white; }
+}

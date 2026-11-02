@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.env.local
+coverage
+*.local
+build-result.txt
+test-result.txt
+dev-server.txt
+repair-dependency.txt
