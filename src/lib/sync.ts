@@ -9,6 +9,10 @@ const remoteTable: Record<SyncEntity, string> = {
   clients: 'clients', properties: 'properties', fields: 'fields', visits: 'visits', evaluations: 'evaluations', photos: 'photos', reports: 'reports'
 }
 
+const syncOrder: Record<SyncEntity, number> = {
+  clients: 0, properties: 1, fields: 2, visits: 3, evaluations: 4, photos: 5, reports: 6
+}
+
 const tableFor = (entity: SyncEntity) => ({
   clients: db.clients, properties: db.properties, fields: db.fields, visits: db.visits,
   evaluations: db.evaluations, photos: db.photos, reports: db.reports
@@ -73,7 +77,12 @@ export async function syncNow(): Promise<SyncResult> {
   if (!navigator.onLine) return { ok: false, message: 'Sem conexão. Os dados permanecem seguros neste dispositivo.', pending }
   const { data: auth, error: authError } = await supabase.auth.getUser()
   if (authError || !auth.user) return { ok: false, message: 'Faça login para sincronizar.', pending }
-  const items = await db.syncQueue.orderBy('createdAt').toArray()
+  // A saved parent can be edited after one of its children. Always preserve foreign-key order
+  // rather than relying only on the moment an item was last edited.
+  const items = (await db.syncQueue.orderBy('createdAt').toArray()).sort((left, right) => {
+    const dependencyOrder = syncOrder[left.entity] - syncOrder[right.entity]
+    return dependencyOrder || left.createdAt.localeCompare(right.createdAt)
+  })
   let completed = 0
   for (const item of items) {
     try {
@@ -81,8 +90,9 @@ export async function syncNow(): Promise<SyncResult> {
       if (item.id) await db.syncQueue.delete(item.id)
       completed++
     } catch (error) {
-      if (item.id) await db.syncQueue.update(item.id, { attempts: item.attempts + 1, lastError: error instanceof Error ? error.message : 'Erro de sincronização' })
-      return { ok: false, message: `Sincronização interrompida após ${completed} item(ns).`, pending: await db.syncQueue.count() }
+      const reason = error instanceof Error ? error.message : 'Erro de sincronização desconhecido'
+      if (item.id) await db.syncQueue.update(item.id, { attempts: item.attempts + 1, lastError: reason })
+      return { ok: false, message: `Falha ao enviar ${item.entity}: ${reason}`, pending: await db.syncQueue.count() }
     }
   }
   // Pull only after the local queue is empty, so remote data never overwrites an unsynced edit.
