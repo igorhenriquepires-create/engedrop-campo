@@ -65,18 +65,8 @@ async function bundledLogoDataUrl() {
   return blobToDataUrl(await response.blob())
 }
 
-async function imageDimensions(blob: Blob) {
-  const url = URL.createObjectURL(blob)
-  try {
-    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const element = new Image(); element.onload = () => resolve(element); element.onerror = reject; element.src = url
-    })
-    return { width: image.naturalWidth || 4, height: image.naturalHeight || 3 }
-  } finally { URL.revokeObjectURL(url) }
-}
-
 type PdfColor = [number, number, number]
-type PreparedPhoto = { photo: VisitPhoto; dataUrl: string; ratio: number; caption: string }
+type PreparedPhoto = { photo: VisitPhoto; dataUrl: string; ratio: number; caption: string; format: 'JPEG' | 'PNG' }
 
 const green: PdfColor = [8, 116, 67]
 const darkGreen: PdfColor = [4, 86, 49]
@@ -106,8 +96,30 @@ async function preparePhotos(photos: VisitPhoto[]): Promise<PreparedPhoto[]> {
   for (const photo of photos) {
     if (!photo.blob) continue
     try {
-      const [dataUrl, dimensions] = await Promise.all([blobToDataUrl(photo.blob), imageDimensions(photo.blob)])
-      prepared.push({ photo, dataUrl, ratio: dimensions.width / dimensions.height, caption: photo.caption?.trim() || 'Registro fotográfico' })
+      // Render through the browser first. This normalizes HEIC/rotated images
+      // from iPhone camera rolls into an actual JPEG that jsPDF understands.
+      // It also prevents an unsupported source format from silently omitting a
+      // valid field photo in the finished report.
+      const sourceUrl = URL.createObjectURL(photo.blob)
+      try {
+        const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const element = new Image()
+          element.onload = () => resolve(element)
+          element.onerror = reject
+          element.src = sourceUrl
+        })
+        const ratio = (image.naturalWidth || 4) / (image.naturalHeight || 3)
+        const maxSide = 2400
+        const scale = Math.min(1, maxSide / Math.max(image.naturalWidth || 1, image.naturalHeight || 1))
+        const width = Math.max(1, Math.round((image.naturalWidth || 4) * scale))
+        const height = Math.max(1, Math.round((image.naturalHeight || 3) * scale))
+        const canvas = document.createElement('canvas')
+        canvas.width = width; canvas.height = height
+        const context = canvas.getContext('2d')
+        if (!context) throw new Error('Canvas indisponível')
+        context.drawImage(image, 0, 0, width, height)
+        prepared.push({ photo, dataUrl: canvas.toDataURL('image/jpeg', 0.9), ratio, format: 'JPEG', caption: photo.caption?.trim() || 'Registro fotográfico' })
+      } finally { URL.revokeObjectURL(sourceUrl) }
     } catch { /* an unreadable local file must not prevent the technical report */ }
   }
   return prepared
@@ -264,7 +276,7 @@ export async function createVisitPdf(context: ReportContext): Promise<Blob> {
       const drawX = imageX + (maxWidth - width) / 2
       const drawY = imageY + (maxHeight - height) / 2
       doc.saveGraphicsState()
-      try { doc.addImage(item.dataUrl, item.photo.mimeType.toLowerCase().includes('png') ? 'PNG' : 'JPEG', drawX, drawY, width, height, undefined, 'FAST') } catch { /* leave the labelled frame visible */ }
+      try { doc.addImage(item.dataUrl, item.format, drawX, drawY, width, height, undefined, 'FAST') } catch { /* leave the labelled frame visible */ }
       finally { doc.restoreGraphicsState() }
       setText(6.5, muted, 'bold'); doc.text(`FOTO ${String(startIndex + column + 1).padStart(2, '0')}`, x + 3, y + imageHeight + 4)
       setText(7.4, ink); doc.text(captions[column], x + 3, y + imageHeight + 8)

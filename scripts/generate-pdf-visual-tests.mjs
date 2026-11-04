@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 
 const root = process.cwd()
 const logoBytes = await readFile(resolve(root, 'public', 'engedrop-logo-white.png'))
+const logoDataUrl = `data:image/png;base64,${logoBytes.toString('base64')}`
 
 class BrowserFileReader {
   result = null
@@ -27,6 +28,14 @@ class BrowserImage {
 globalThis.FileReader = BrowserFileReader
 globalThis.Image = BrowserImage
 globalThis.fetch = async () => new Response(logoBytes, { status: 200, headers: { 'content-type': 'image/png' } })
+globalThis.document = {
+  createElement: () => ({
+    width: 0,
+    height: 0,
+    getContext: () => ({ drawImage: () => undefined }),
+    toDataURL: () => logoDataUrl
+  })
+}
 
 const { createVisitPdf } = await import('../src/lib/reporting.ts')
 

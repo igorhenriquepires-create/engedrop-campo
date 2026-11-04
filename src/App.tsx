@@ -255,7 +255,27 @@ function VisitEditorPage() {
   }
   const save = async (status: Visit['status']) => { if (!selection.clientId && !visit.clientId) return toast('Selecione um cliente.', 'error'); if (status === 'finalized' && !evaluations.length) return toast('Adicione pelo menos um talhão antes de finalizar.', 'error'); setSaving(true); try { const bundle = savedBundle(); bundle.visit.status = status; const previous = await db.evaluations.where('visitId').equals(bundle.visit.id).toArray(); for (const oldEvaluation of previous.filter(item => !bundle.evaluations.some(current => current.id === item.id))) await removeEvaluation(oldEvaluation.id); for (const evaluation of bundle.evaluations) { const oldPhotos = await db.photos.where('evaluationId').equals(evaluation.id).toArray(); const currentPhotoIds = new Set(bundle.photos.filter(photo => photo.evaluationId === evaluation.id).map(photo => photo.id)); for (const oldPhoto of oldPhotos.filter(photo => !currentPhotoIds.has(photo.id))) await removePhoto(oldPhoto.id) } await saveVisitBundle(bundle); setVisit(bundle.visit); refresh(); toast(status === 'finalized' ? 'Visita finalizada com sucesso.' : 'Rascunho salvo neste dispositivo.'); if (!routeVisitId) navigate(`/visits/${bundle.visit.id}`, {replace:true}) } finally { setSaving(false) } }
   const context = (): ReportContext | null => { const client = clients.find(item => item.id === (selection.clientId || visit.clientId)); if (!client || !evaluations.length) return null; const converted: Evaluation[] = savedBundle().evaluations; return { visit: {...visit, clientId:client.id}, client, properties, fields, evaluations: converted, photos: savedBundle().photos } }
-  const createPdf = async () => { const reportContext = context(); if (!reportContext) return toast('Inclua cliente e ao menos uma avaliação para gerar o relatório.', 'error'); setSaving(true); try { const completeContext = { ...reportContext, photos: await Promise.all(reportContext.photos.map(ensurePhotoBlob)) }; const blob = await createVisitPdf(completeContext); setReportBlob(blob); const filename = `engedrop-${reportContext.client.name.toLowerCase().replace(/[^a-z0-9]+/gi,'-')}-${reportContext.visit.date}.pdf`; await saveReport({visitId:visit.id,evaluationIds:reportContext.evaluations.map(item=>item.id),filename,blob,generatedAt:now()}); refresh(); toast('PDF gerado e salvo no histórico.'); } catch { toast('Não foi possível gerar o PDF.', 'error') } finally { setSaving(false) } }
+  const createPdf = async () => {
+    const initialContext = context()
+    if (!initialContext) return toast('Inclua cliente e ao menos uma avaliação para gerar o relatório.', 'error')
+    setSaving(true)
+    try {
+      // Give recently captured photos one immediate chance to reach private
+      // Storage, then rebuild the report context before reading cloud assets.
+      await syncNow().catch(() => undefined)
+      await pullRemote().catch(() => undefined)
+      const reportContext = context() ?? initialContext
+      const photos = await Promise.all(reportContext.photos.map(ensurePhotoBlob))
+      const completeContext = { ...reportContext, photos }
+      const missingPhotos = photos.filter(photo => !photo.blob).length
+      const blob = await createVisitPdf(completeContext)
+      setReportBlob(blob)
+      const filename = `engedrop-${reportContext.client.name.toLowerCase().replace(/[^a-z0-9]+/gi,'-')}-${reportContext.visit.date}.pdf`
+      await saveReport({visitId:visit.id,evaluationIds:reportContext.evaluations.map(item=>item.id),filename,blob,generatedAt:now()})
+      refresh()
+      toast(missingPhotos ? `PDF gerado. ${missingPhotos} foto(s) ainda não estavam disponíveis neste aparelho.` : 'PDF gerado e salvo no histórico.')
+    } catch { toast('Não foi possível gerar o PDF.', 'error') } finally { setSaving(false) }
+  }
   const openWhatsApp = () => { const reportContext = context(); if (!reportContext) return toast('Inclua cliente e uma avaliação.', 'error'); setWhatsAppText(buildWhatsAppReport(reportContext)); setShowWhatsApp(true) }
   if (!loaded) return <Loading/>
   const clientForTitle = clients.find(item => item.id === (selection.clientId || visit.clientId))

@@ -146,7 +146,10 @@ export async function ensurePhotoBlob(photo: VisitPhoto): Promise<VisitPhoto> {
   const { data, error } = await supabase.storage.from('visit-photos').download(photo.storagePath)
   if (error || !data) return photo
   const hydrated = { ...photo, blob: data }
-  await db.photos.put(hydrated)
+  // The downloaded binary is immediately usable for PDF creation. Safari may
+  // refuse to cache a Storage Blob in IndexedDB; do not turn that cache-only
+  // problem into an image missing from the report.
+  try { await db.photos.put(hydrated) } catch { /* keep the in-memory photo */ }
   return hydrated
 }
 
