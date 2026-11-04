@@ -111,7 +111,9 @@ async function preparePhotos(photos: VisitPhoto[]): Promise<PreparedPhoto[]> {
           element.src = sourceUrl
         })
         const ratio = (image.naturalWidth || 4) / (image.naturalHeight || 3)
-        const maxSide = 2400
+        // The report remains sharp on screen and on A4, while a 1600 px
+        // ceiling keeps multi-photo PDFs safely below private Storage limits.
+        const maxSide = 1600
         const scale = Math.min(1, maxSide / Math.max(image.naturalWidth || 1, image.naturalHeight || 1))
         const width = Math.max(1, Math.round((image.naturalWidth || 4) * scale))
         const height = Math.max(1, Math.round((image.naturalHeight || 3) * scale))
@@ -120,7 +122,7 @@ async function preparePhotos(photos: VisitPhoto[]): Promise<PreparedPhoto[]> {
         const context = canvas.getContext('2d')
         if (!context) throw new Error('Canvas indisponível')
         context.drawImage(image, 0, 0, width, height)
-        prepared.push({ photo, dataUrl: canvas.toDataURL('image/jpeg', 0.9), ratio, format: 'JPEG', caption: photo.caption?.trim() || 'Registro fotográfico' })
+        prepared.push({ photo, dataUrl: canvas.toDataURL('image/jpeg', 0.78), ratio, format: 'JPEG', caption: photo.caption?.trim() || 'Registro fotográfico' })
       } finally { URL.revokeObjectURL(sourceUrl) }
     } catch { /* an unreadable local file must not prevent the technical report */ }
   }

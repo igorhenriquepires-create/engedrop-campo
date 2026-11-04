@@ -88,25 +88,41 @@ async function markSynced(entity: SyncEntity, table: ReturnType<typeof tableFor>
   }
 }
 
+function isAssetTooLarge(error: unknown) {
+  const message = syncErrorMessage(error).toLowerCase()
+  return /maximum allowed size|object exceeded|file.*too large|payload too large/.test(message)
+}
+
 async function syncQueueItem(item: SyncQueueItem, userId: string) {
-  if (!supabase) return
+  if (!supabase) return { reportKeptLocal: false }
   const entity = item.entity
   const table = tableFor(entity)
   const remote = supabase.from(remoteTable[entity]) as any
   if (item.action === 'delete') {
     const { error } = await remote.delete().eq('id', item.entityId)
     if (error) throw error
-    return
+    return { reportKeptLocal: false }
   }
   const record = await table.get(item.entityId) as any
-  if (!record) return
+  if (!record) return { reportKeptLocal: false }
+  let reportKeptLocal = false
   if (entity === 'photos' || entity === 'reports') {
-    const storagePath = await uploadAsset(entity, record, userId)
-    if (storagePath) record.storagePath = storagePath
+    try {
+      const storagePath = await uploadAsset(entity, record, userId)
+      if (storagePath) record.storagePath = storagePath
+    } catch (error) {
+      // A PDF that is too large for private Storage must never prevent the
+      // visit, its evaluations or photos from reaching the cloud. Preserve the
+      // original PDF in this device and synchronize its history metadata.
+      if (entity !== 'reports' || !isAssetTooLarge(error)) throw error
+      reportKeptLocal = true
+      record.storagePath = undefined
+    }
   }
   const { error } = await remote.upsert(toRemote(entity, record), { onConflict: 'id' })
   if (error) throw error
   await markSynced(entity, table, record.id)
+  return { reportKeptLocal }
 }
 
 export async function pendingSyncCount() { return db.syncQueue.count() }
@@ -124,11 +140,13 @@ export async function syncNow(): Promise<SyncResult> {
     return dependencyOrder || left.createdAt.localeCompare(right.createdAt)
   })
   let completed = 0
+  let reportsKeptLocal = 0
   for (const item of items) {
     try {
-      await syncQueueItem(item, auth.user.id)
+      const result = await syncQueueItem(item, auth.user.id)
       if (item.id) await db.syncQueue.delete(item.id)
       completed++
+      if (result.reportKeptLocal) reportsKeptLocal++
     } catch (error) {
       const reason = syncErrorMessage(error)
       if (item.id) await db.syncQueue.update(item.id, { attempts: item.attempts + 1, lastError: reason })
@@ -137,7 +155,8 @@ export async function syncNow(): Promise<SyncResult> {
   }
   // Pull only after the local queue is empty, so remote data never overwrites an unsynced edit.
   try { await pullRemote() } catch { /* uploads succeeded; the next sync will retry the refresh */ }
-  return { ok: true, message: completed ? `${completed} item(ns) sincronizado(s).` : 'Todos os dados já estão sincronizados.', pending: 0 }
+  const suffix = reportsKeptLocal ? ` ${reportsKeptLocal} PDF(s) grande(s) ficou(ram) salvo(s) somente neste aparelho.` : ''
+  return { ok: true, message: completed ? `${completed} item(ns) sincronizado(s).${suffix}` : 'Todos os dados já estão sincronizados.', pending: 0 }
 }
 
 /** Restores a private Storage asset into IndexedDB when it originated on another device. */
