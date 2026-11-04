@@ -75,7 +75,9 @@ const muted: PdfColor = [91, 105, 114]
 const line: PdfColor = [222, 231, 225]
 const paleGreen: PdfColor = [240, 248, 243]
 const margin = 15
-const footerSpace = 17
+// The footer rule begins at 284.5 mm. Keeping content to 282 mm leaves a
+// clear visual gutter while still using the printable area above it.
+const footerSpace = 15
 
 function photoRows(photos: PreparedPhoto[]): PreparedPhoto[][] {
   if (photos.length <= 2) return [photos]
@@ -250,19 +252,23 @@ export async function createVisitPdf(context: ReportContext): Promise<Blob> {
       first = false
     }
   }
-  const photoRowLayout = (row: PreparedPhoto[]) => {
-    const imageHeight = row.length === 1 ? 82 : 60
+  const photoRowLayout = (row: PreparedPhoto[], compactGrid = false) => {
+    // Six short-caption photos fit in three balanced rows on A4. Small grids
+    // retain the larger image treatment, while long captions still flow onto
+    // a new page as a complete photo-and-caption unit when necessary.
+    const imageHeight = row.length === 1 ? 82 : compactGrid ? 52 : 60
     const gap = 4
     const itemWidth = (contentWidth - gap * (row.length - 1)) / row.length
     const captions = row.map(item => split(item.caption, itemWidth - 6, 7.4))
     const captionHeight = Math.max(...captions.map(lines => Math.max(1, lines.length))) * 3.7 + 7
     return { imageHeight, gap, itemWidth, captions, totalHeight: imageHeight + captionHeight + 4 }
   }
-  const drawPhotoRow = (row: PreparedPhoto[], startIndex: number) => {
-    const { imageHeight, gap, itemWidth, captions, totalHeight } = photoRowLayout(row)
-    // Keep a safety gutter before the institutional footer. It also avoids a
-    // WebKit/jsPDF edge case that can split the final caption onto a new page.
-    ensure(totalHeight + 8)
+  const drawPhotoRow = (row: PreparedPhoto[], startIndex: number, compactGrid = false) => {
+    const { imageHeight, gap, itemWidth, captions, totalHeight } = photoRowLayout(row, compactGrid)
+    // A photo and its caption are always treated as one unit. The former
+    // 8 mm safety reserve was unnecessarily moving a complete final row to a
+    // new page, leaving a conspicuous blank area above the footer.
+    ensure(totalHeight + 1)
     row.forEach((item, column) => {
       const x = margin + column * (itemWidth + gap)
       card(x, y, itemWidth, totalHeight, [255, 255, 255])
@@ -281,7 +287,7 @@ export async function createVisitPdf(context: ReportContext): Promise<Blob> {
       setText(6.5, muted, 'bold'); doc.text(`FOTO ${String(startIndex + column + 1).padStart(2, '0')}`, x + 3, y + imageHeight + 4)
       setText(7.4, ink); doc.text(captions[column], x + 3, y + imageHeight + 8)
     })
-    y += totalHeight + 5
+    y += totalHeight + 4
   }
 
   drawHeader()
@@ -307,9 +313,13 @@ export async function createVisitPdf(context: ReportContext): Promise<Blob> {
     const photos = await preparePhotos(context.photos.filter(photo => photo.evaluationId === evaluation.id).sort((a, b) => a.position - b.position))
     if (photos.length) {
       const rows = photoRows(photos)
-      section('Registro fotográfico', `${photos.length} fotografia${photos.length === 1 ? '' : 's'} vinculada${photos.length === 1 ? '' : 's'} à avaliação`, photoRowLayout(rows[0]).totalHeight)
+      const compactGrid = rows.length >= 3
+      section('Registro fotográfico', `${photos.length} fotografia${photos.length === 1 ? '' : 's'} vinculada${photos.length === 1 ? '' : 's'} à avaliação`, photoRowLayout(rows[0], compactGrid).totalHeight)
       let count = 0
-      for (const row of rows) { drawPhotoRow(row, count); count += row.length }
+      for (const row of rows) { drawPhotoRow(row, count, compactGrid); count += row.length }
+      // Deliberately separate the photographic evidence from the technical
+      // data of the next field evaluation without wasting space within a grid.
+      y += 8
     }
   }
   const pages = doc.getNumberOfPages()
