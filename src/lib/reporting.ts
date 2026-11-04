@@ -147,7 +147,7 @@ export async function createVisitPdf(context: ReportContext): Promise<Blob> {
     }
     setText(18, [255, 255, 255], 'bold'); doc.text('RELATÓRIO DE', margin, 15)
     setText(18, [255, 255, 255], 'bold'); doc.text('VISITA TÉCNICA', margin, 23)
-    setText(8.5, [225, 246, 235]); doc.text(`${company.toUpperCase()} - ACOMPANHAMENTO AGRONÔMICO`, margin, 31)
+    setText(8.5, [225, 246, 235]); doc.text(`${company.toUpperCase()} - ACOMPANHAMENTO DE CAMPO`, margin, 31)
     drawLogo(10); y = 51
   }
   const newPage = () => {
