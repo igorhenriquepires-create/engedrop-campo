@@ -258,6 +258,9 @@ function VisitEditorPage() {
     return { visit: finalVisit, evaluations: finalEvals, photos: finalPhotos }
   }
   const persist = async (status: Visit['status'], automatic = false, expectedRevision = revisionRef.current) => {
+    // A delayed autosave from before finalization must never turn a finalized
+    // visit back into a draft. Newer edits invalidate older timer callbacks.
+    if (automatic && expectedRevision !== revisionRef.current) return
     if (!automatic && !selection.clientId && !visit.clientId) return toast('Selecione um cliente.', 'error')
     if (status === 'finalized' && !evaluations.length) return toast('Adicione pelo menos um talhão antes de finalizar.', 'error')
     const run = async () => {
@@ -281,7 +284,10 @@ function VisitEditorPage() {
     saveChainRef.current = queued.catch(() => undefined)
     return queued
   }
-  const save = (status: Visit['status']) => persist(status)
+  const save = (status: Visit['status']) => {
+    if (status === 'finalized') { revisionRef.current += 1; setDraftRevision(0) }
+    return persist(status, false, revisionRef.current)
+  }
   useEffect(() => {
     if (!loaded || !draftRevision || visit.status === 'finalized') return
     const expectedRevision = draftRevision
