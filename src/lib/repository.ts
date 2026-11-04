@@ -103,3 +103,59 @@ export async function dashboardData() {
   ])
   return { clients, properties, fields, visits, recent }
 }
+
+export type LocalRecoveryStatus = {
+  visits: number
+  drafts: number
+  evaluations: number
+  photos: number
+  pending: number
+  orphanEvaluations: number
+}
+
+/** Read-only inventory used before any recovery action. */
+export async function localRecoveryStatus(): Promise<LocalRecoveryStatus> {
+  const [visits, evaluations, photos, pending] = await Promise.all([
+    db.visits.toArray(), db.evaluations.toArray(), db.photos.count(), db.syncQueue.count()
+  ])
+  const visitIds = new Set(visits.map(item => item.id))
+  return {
+    visits: visits.length,
+    drafts: visits.filter(item => item.status === 'draft').length,
+    evaluations: evaluations.length,
+    photos,
+    pending,
+    orphanEvaluations: evaluations.filter(item => !visitIds.has(item.visitId)).length
+  }
+}
+
+/**
+ * Repairs only the recoverable case where a locally stored evaluation survived
+ * but its parent draft record did not. Existing visits are never replaced.
+ */
+export async function restoreOrphanedDrafts() {
+  let restored = 0
+  await db.transaction('rw', db.visits, db.evaluations, db.syncQueue, async () => {
+    const [visits, evaluations] = await Promise.all([db.visits.toArray(), db.evaluations.toArray()])
+    const visitIds = new Set(visits.map(item => item.id))
+    for (const evaluation of evaluations) {
+      if (visitIds.has(evaluation.visitId)) continue
+      const timestamp = evaluation.updatedAt || evaluation.createdAt || now()
+      const restoredVisit: Visit = {
+        id: evaluation.visitId,
+        clientId: evaluation.clientId,
+        date: timestamp.slice(0, 10),
+        status: 'draft',
+        createdAt: evaluation.createdAt || timestamp,
+        updatedAt: timestamp,
+        syncState: 'pending'
+      }
+      await db.visits.put(restoredVisit)
+      await queue('visits', restoredVisit.id)
+      visitIds.add(restoredVisit.id)
+      restored++
+    }
+  })
+  if (restored) requestSync()
+  return restored
+}
