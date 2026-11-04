@@ -265,15 +265,32 @@ function VisitEditorPage() {
       await syncNow().catch(() => undefined)
       await pullRemote().catch(() => undefined)
       const reportContext = context() ?? initialContext
-      const photos = await Promise.all(reportContext.photos.map(ensurePhotoBlob))
+      // The editor state can contain only image metadata after an iOS reload.
+      // Read the visit's persisted records again, then refresh their Storage
+      // paths directly from Supabase even when an unrelated queued report is
+      // preventing a full background pull.
+      const evaluationIds = reportContext.evaluations.map(item => item.id)
+      const persistedPhotos = evaluationIds.length ? await db.photos.where('evaluationId').anyOf(evaluationIds).toArray() : []
+      const photoById = new Map([...reportContext.photos, ...persistedPhotos].map(photo => [photo.id, photo]))
+      let reportPhotos = [...photoById.values()]
+      if (supabase && reportPhotos.length) {
+        const { data } = await supabase.from('photos').select('id, storage_path').in('id', reportPhotos.map(photo => photo.id))
+        const storagePaths = new Map((data ?? []).filter(item => item.storage_path).map(item => [item.id, item.storage_path]))
+        reportPhotos = reportPhotos.map(photo => storagePaths.has(photo.id) ? { ...photo, storagePath: storagePaths.get(photo.id) } : photo)
+      }
+      const photos = await Promise.all(reportPhotos.map(ensurePhotoBlob))
       const completeContext = { ...reportContext, photos }
       const missingPhotos = photos.filter(photo => !photo.blob).length
+      if (reportPhotos.length && missingPhotos) {
+        toast(`Não foi possível recuperar ${missingPhotos} foto(s) para o PDF. Aguarde a sincronização e tente novamente.`, 'error')
+        return
+      }
       const blob = await createVisitPdf(completeContext)
       setReportBlob(blob)
       const filename = `engedrop-${reportContext.client.name.toLowerCase().replace(/[^a-z0-9]+/gi,'-')}-${reportContext.visit.date}.pdf`
       await saveReport({visitId:visit.id,evaluationIds:reportContext.evaluations.map(item=>item.id),filename,blob,generatedAt:now()})
       refresh()
-      toast(missingPhotos ? `PDF gerado. ${missingPhotos} foto(s) ainda não estavam disponíveis neste aparelho.` : 'PDF gerado e salvo no histórico.')
+      toast('PDF gerado e salvo no histórico.')
     } catch { toast('Não foi possível gerar o PDF.', 'error') } finally { setSaving(false) }
   }
   const openWhatsApp = () => { const reportContext = context(); if (!reportContext) return toast('Inclua cliente e uma avaliação.', 'error'); setWhatsAppText(buildWhatsAppReport(reportContext)); setShowWhatsApp(true) }
