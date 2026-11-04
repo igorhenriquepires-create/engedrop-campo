@@ -9,3 +9,4 @@ test-result.txt
 dev-server.txt
 repair-dependency.txt
 .netlify
+tmp/
