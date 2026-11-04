@@ -1,6 +1,6 @@
 import { db } from './db'
 import { now, uid } from './utils'
-import type { Client, EntityBase, Evaluation, Field, NewEntity, Property, Report, SyncEntity, SyncQueueItem, Visit, VisitBundle, VisitPhoto } from '../types'
+import type { Client, EntityBase, Evaluation, Field, NewEntity, Property, Report, ReportSnapshot, SyncEntity, SyncQueueItem, Visit, VisitBundle, VisitPhoto } from '../types'
 
 const entityTables = {
   clients: db.clients,
@@ -66,6 +66,34 @@ export async function getVisitBundle(visitId: string): Promise<VisitBundle | und
   const evaluations = await db.evaluations.where('visitId').equals(visitId).toArray()
   const photos = (await Promise.all(evaluations.map(item => db.photos.where('evaluationId').equals(item.id).toArray()))).flat()
   return { visit, evaluations, photos }
+}
+
+/**
+ * Restores only records that are absent locally from the snapshot kept with a
+ * report. It never overwrites a newer client, visit, evaluation or photo.
+ */
+export async function restoreReportSnapshot(reportId: string) {
+  const report = await db.reports.get(reportId)
+  const snapshot: ReportSnapshot | undefined = report?.sourceSnapshot
+  if (!snapshot) return 0
+  let restored = 0
+  await (db.transaction as any)('rw', db.clients, db.properties, db.fields, db.visits, db.evaluations, db.photos, db.syncQueue, async () => {
+    const restore = async (entity: SyncEntity, table: any, record: any) => {
+      if (await table.get(record.id)) return
+      const recovered = { ...record, syncState: 'pending' as const, updatedAt: now() }
+      await table.put(recovered)
+      await queue(entity, recovered.id)
+      restored++
+    }
+    await restore('clients', db.clients, snapshot.client)
+    for (const property of snapshot.properties) await restore('properties', db.properties, property)
+    for (const field of snapshot.fields) await restore('fields', db.fields, field)
+    await restore('visits', db.visits, snapshot.visit)
+    for (const evaluation of snapshot.evaluations) await restore('evaluations', db.evaluations, evaluation)
+    for (const photo of snapshot.photos) await restore('photos', db.photos, photo)
+  })
+  if (restored) requestSync()
+  return restored
 }
 
 export async function removePhoto(id: string) {

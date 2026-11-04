@@ -18,7 +18,19 @@ export const downloadBlob = (blob: Blob, filename: string) => {
   anchor.href = url
   anchor.download = filename
   anchor.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  // WebKit may still be reading a Blob URL after the download sheet appears.
+  // Releasing it too quickly causes the "WebKitBlobResource error 1" page.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
+}
+
+/** Prefer iOS/Android's native share sheet for generated files. */
+export const shareOrDownloadBlob = async (blob: Blob, filename: string, title = filename) => {
+  const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' })
+  if (navigator.share && navigator.canShare?.({ files: [file] })) {
+    await navigator.share({ title, files: [file] })
+    return
+  }
+  downloadBlob(blob, filename)
 }
 
 export const isOnline = () => typeof navigator === 'undefined' || navigator.onLine

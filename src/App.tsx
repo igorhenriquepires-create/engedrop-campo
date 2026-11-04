@@ -5,10 +5,10 @@ import { db } from './lib/db'
 import { calculateStand } from './lib/stand'
 import { stagesForCulture } from './lib/phenology'
 import { buildWhatsAppReport, createVisitPdf, type ReportContext } from './lib/reporting'
-import { dashboardData, getVisitBundle, localRecoveryStatus, removeEvaluation, removePhoto, restoreOrphanedDrafts, saveClient, saveField, saveProperty, saveReport, saveVisitBundle, type LocalRecoveryStatus } from './lib/repository'
+import { dashboardData, getVisitBundle, localRecoveryStatus, removeEvaluation, removePhoto, restoreOrphanedDrafts, restoreReportSnapshot, saveClient, saveField, saveProperty, saveReport, saveVisitBundle, type LocalRecoveryStatus } from './lib/repository'
 import { ensurePhotoBlob, pullRemote, pendingSyncCount, syncNow } from './lib/sync'
 import { supabase, supabaseConfigured } from './lib/supabase'
-import { dateLabel, decimal, downloadBlob, initials, isOnline, now, today, uid } from './lib/utils'
+import { dateLabel, decimal, downloadBlob, initials, isOnline, now, shareOrDownloadBlob, today, uid } from './lib/utils'
 import type { Client, Evaluation, Field, NewEntity, Property, Report, StandMeasurement, Visit, VisitPhoto } from './types'
 
 type Toast = { message: string; tone?: 'success' | 'error' }
@@ -338,7 +338,7 @@ function VisitEditorPage() {
       const blob = await createVisitPdf(completeContext)
       setReportBlob(blob)
       const filename = `engedrop-${reportContext.client.name.toLowerCase().replace(/[^a-z0-9]+/gi,'-')}-${reportContext.visit.date}.pdf`
-      await saveReport({visitId:visit.id,evaluationIds:reportContext.evaluations.map(item=>item.id),filename,blob,generatedAt:now()})
+      await saveReport({visitId:visit.id,evaluationIds:reportContext.evaluations.map(item=>item.id),filename,blob,generatedAt:now(),sourceSnapshot:{client:reportContext.client,properties:reportContext.properties,fields:reportContext.fields,visit:reportContext.visit,evaluations:reportContext.evaluations,photos:reportContext.photos.map(({blob: _blob,...photo})=>photo)}})
       refresh()
       toast('PDF gerado e salvo no histórico.')
     } catch { toast('Não foi possível gerar o PDF.', 'error') } finally { setSaving(false) }
@@ -376,20 +376,30 @@ function PhotoItem({photo,onChange,onDelete,onMove,canMoveUp,canMoveDown}:{photo
 
 function StoredReports({ visitId }: { visitId: string }) {
   const { data: reports, loading } = useLoaded(() => db.reports.where('visitId').equals(visitId).reverse().sortBy('generatedAt'), [visitId])
-  const { toast } = useApp()
+  const { toast, refresh } = useApp(); const navigate = useNavigate()
   const download = async (report: Report) => {
-    if (report.blob) return downloadBlob(report.blob, report.filename)
+    if (report.blob) return shareOrDownloadBlob(report.blob, report.filename, 'Relatório Engedrop')
     if (report.storagePath && supabase) {
       const { data, error } = await supabase.storage.from('visit-reports').download(report.storagePath)
-      if (!error && data) return downloadBlob(data, report.filename)
+      if (!error && data) return shareOrDownloadBlob(data, report.filename, 'Relatório Engedrop')
     }
     toast('O arquivo ainda não está disponível neste dispositivo.', 'error')
   }
+  const restore = async (report: Report) => {
+    await pullRemote().catch(() => undefined)
+    let bundle = await getVisitBundle(report.visitId)
+    if (!bundle?.evaluations.length) {
+      const restored = await restoreReportSnapshot(report.id)
+      if (restored) { refresh(); bundle = await getVisitBundle(report.visitId) }
+    }
+    if (!bundle?.evaluations.length) return toast('Este PDF antigo não possui dados recuperáveis neste aparelho ou na nuvem.', 'error')
+    navigate(`/visits/${report.visitId}`)
+  }
   if (loading || !reports?.length) return null
-  return <Card><div className="mb-3 flex items-center gap-2"><FileText size={17} className="text-brand-600"/><h3 className="font-bold">Relatórios salvos</h3></div><div className="space-y-2">{reports.map(report => <button key={report.id} onClick={() => download(report)} className="flex w-full items-center gap-2 rounded-lg p-2 text-left text-sm hover:bg-brand-50"><Download size={16} className="text-brand-700"/><span className="min-w-0 flex-1 truncate">{report.filename}</span></button>)}</div></Card>
+  return <Card><div className="mb-3 flex items-center gap-2"><FileText size={17} className="text-brand-600"/><h3 className="font-bold">Relatórios salvos</h3></div><p className="mb-3 text-xs leading-relaxed text-slate-500">O PDF é uma cópia final. Use “Editar dados” para reabrir a visita de origem e gerar uma nova versão.</p><div className="space-y-2">{reports.map(report => <div key={report.id} className="rounded-lg border border-slate-100 p-2"><div className="flex items-center gap-2 text-left text-sm"><FileText size={16} className="shrink-0 text-brand-700"/><span className="min-w-0 flex-1 truncate">{report.filename}</span></div><div className="mt-2 flex gap-2"><button onClick={() => void download(report)} className="btn-ghost min-h-8 px-2 text-xs"><Download size={14}/>Salvar / compartilhar</button><button onClick={() => void restore(report)} className="btn-secondary min-h-8 px-2 text-xs"><Pencil size={14}/>Editar dados</button></div></div>)}</div></Card>
 }
 
-function PdfPreview({blob,onClose}:{blob:Blob;onClose:()=>void}) {const [url,setUrl]=useState('');useEffect(()=>{const current=URL.createObjectURL(blob);setUrl(current);return()=>URL.revokeObjectURL(current)},[blob]);const share=async()=>{const file=new File([blob],'relatorio-engedrop.pdf',{type:'application/pdf'});if(navigator.share&&navigator.canShare?.({files:[file]}))await navigator.share({title:'Relatório Engedrop',files:[file]});else downloadBlob(blob,file.name)};return <Modal title="Pré-visualização do relatório" onClose={onClose} wide><div className="h-[55vh] overflow-hidden rounded-xl border border-slate-200">{url&&<iframe className="h-full w-full" src={url} title="Relatório PDF"/>}</div><div className="mt-4 flex justify-end gap-2"><button className="btn-secondary" onClick={()=>downloadBlob(blob,'relatorio-engedrop.pdf')}><Download size={17}/>Baixar</button><button className="btn-primary" onClick={share}><Share2 size={17}/>Compartilhar</button></div></Modal>}
+function PdfPreview({blob,onClose}:{blob:Blob;onClose:()=>void}) {const [url,setUrl]=useState('');useEffect(()=>{const current=URL.createObjectURL(blob);setUrl(current);return()=>URL.revokeObjectURL(current)},[blob]);const share=()=>shareOrDownloadBlob(blob,'relatorio-engedrop.pdf','Relatório Engedrop');return <Modal title="Pré-visualização do relatório" onClose={onClose} wide><div className="h-[55vh] overflow-hidden rounded-xl border border-slate-200">{url&&<iframe className="h-full w-full" src={url} title="Relatório PDF"/>}</div><div className="mt-4 flex justify-end gap-2"><button className="btn-secondary" onClick={()=>void share()}><Download size={17}/>Salvar PDF</button><button className="btn-primary" onClick={()=>void share()}><Share2 size={17}/>Compartilhar</button></div></Modal>}
 function WhatsAppModal({text,onClose}:{text:string;onClose:()=>void}) {const {toast}=useApp();const [value,setValue]=useState(text);const copy=async()=>{await navigator.clipboard.writeText(value);toast('Texto copiado.')};const open=()=>window.open(`https://wa.me/?text=${encodeURIComponent(value)}`,'_blank','noopener,noreferrer');return <Modal title="Relatório para WhatsApp" onClose={onClose}><p className="mb-3 text-sm text-slate-500">Revise e edite antes de compartilhar. Campos vazios não são incluídos.</p><textarea className="input min-h-72 font-mono text-xs leading-relaxed" value={value} onChange={e=>setValue(e.target.value)}/><div className="mt-4 flex flex-wrap justify-end gap-2"><button className="btn-secondary" onClick={copy}>Copiar texto</button><button className="btn-primary" onClick={open}><Share2 size={17}/>Abrir WhatsApp</button></div></Modal>}
 
 function HistoryPage() {

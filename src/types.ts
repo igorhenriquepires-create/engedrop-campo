@@ -76,12 +76,25 @@ export interface VisitPhoto extends EntityBase {
   storagePath?: string
 }
 
+/** A lightweight local safety copy attached to every newly generated PDF. */
+export interface ReportSnapshot {
+  client: Client
+  properties: Property[]
+  fields: Field[]
+  visit: Visit
+  evaluations: Evaluation[]
+  // Image bytes stay in their own photo records; the snapshot keeps the
+  // identity, captions and ordering without duplicating a large gallery.
+  photos: Array<Omit<VisitPhoto, 'blob'>>
+}
+
 export interface Report extends EntityBase {
   visitId: string
   evaluationIds: string[]
   filename: string
   blob?: Blob
   storagePath?: string
+  sourceSnapshot?: ReportSnapshot
   generatedAt: string
 }
 
