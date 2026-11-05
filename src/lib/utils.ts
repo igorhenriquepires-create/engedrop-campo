@@ -25,10 +25,17 @@ export const downloadBlob = (blob: Blob, filename: string) => {
 
 /** Prefer iOS/Android's native share sheet for generated files. */
 export const shareOrDownloadBlob = async (blob: Blob, filename: string, title = filename) => {
+  if (!blob.size) throw new Error('O arquivo está vazio neste dispositivo.')
   const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' })
   if (navigator.share && navigator.canShare?.({ files: [file] })) {
-    await navigator.share({ title, files: [file] })
-    return
+    try {
+      await navigator.share({ title, files: [file] })
+      return
+    } catch (error) {
+      // A cancel is intentional. Other iOS share-sheet failures receive a
+      // reliable normal download fallback instead of failing silently.
+      if (error instanceof DOMException && error.name === 'AbortError') return
+    }
   }
   downloadBlob(blob, filename)
 }

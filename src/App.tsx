@@ -377,26 +377,39 @@ function PhotoItem({photo,onChange,onDelete,onMove,canMoveUp,canMoveDown}:{photo
 function StoredReports({ visitId }: { visitId: string }) {
   const { data: reports, loading } = useLoaded(() => db.reports.where('visitId').equals(visitId).reverse().sortBy('generatedAt'), [visitId])
   const { toast, refresh } = useApp(); const navigate = useNavigate()
+  const [workingId, setWorkingId] = useState<string | null>(null)
   const download = async (report: Report) => {
-    if (report.blob) return shareOrDownloadBlob(report.blob, report.filename, 'Relatório Engedrop')
-    if (report.storagePath && supabase) {
-      const { data, error } = await supabase.storage.from('visit-reports').download(report.storagePath)
-      if (!error && data) return shareOrDownloadBlob(data, report.filename, 'Relatório Engedrop')
-    }
-    toast('O arquivo ainda não está disponível neste dispositivo.', 'error')
+    setWorkingId(report.id)
+    try {
+      if (report.blob) { await shareOrDownloadBlob(report.blob, report.filename, 'Relatório Engedrop'); return }
+      if (report.storagePath && supabase) {
+        const { data, error } = await supabase.storage.from('visit-reports').download(report.storagePath)
+        if (!error && data) { await shareOrDownloadBlob(data, report.filename, 'Relatório Engedrop'); return }
+        if (error) throw error
+      }
+      toast('O arquivo não está disponível neste dispositivo nem na nuvem.', 'error')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Não foi possível preparar o PDF.'
+      toast(message, 'error')
+    } finally { setWorkingId(null) }
   }
   const restore = async (report: Report) => {
-    await pullRemote().catch(() => undefined)
-    let bundle = await getVisitBundle(report.visitId)
-    if (!bundle?.evaluations.length) {
-      const restored = await restoreReportSnapshot(report.id)
-      if (restored) { refresh(); bundle = await getVisitBundle(report.visitId) }
-    }
-    if (!bundle?.evaluations.length) return toast('Este PDF antigo não possui dados recuperáveis neste aparelho ou na nuvem.', 'error')
-    navigate(`/visits/${report.visitId}`)
+    setWorkingId(report.id)
+    try {
+      await pullRemote().catch(() => undefined)
+      let bundle = await getVisitBundle(report.visitId)
+      if (!bundle?.evaluations.length) {
+        const restored = await restoreReportSnapshot(report.id)
+        if (restored) { refresh(); bundle = await getVisitBundle(report.visitId) }
+      }
+      if (!bundle?.evaluations.length) return toast('Os dados desta visita não estão mais disponíveis. Este PDF foi criado antes da cópia de segurança automática.', 'error')
+      navigate(`/visits/${report.visitId}`)
+    } catch {
+      toast('Não foi possível recuperar os dados da visita agora. Tente novamente com internet.', 'error')
+    } finally { setWorkingId(null) }
   }
   if (loading || !reports?.length) return null
-  return <Card><div className="mb-3 flex items-center gap-2"><FileText size={17} className="text-brand-600"/><h3 className="font-bold">Relatórios salvos</h3></div><p className="mb-3 text-xs leading-relaxed text-slate-500">O PDF é uma cópia final. Use “Editar dados” para reabrir a visita de origem e gerar uma nova versão.</p><div className="space-y-2">{reports.map(report => <div key={report.id} className="rounded-lg border border-slate-100 p-2"><div className="flex items-center gap-2 text-left text-sm"><FileText size={16} className="shrink-0 text-brand-700"/><span className="min-w-0 flex-1 truncate">{report.filename}</span></div><div className="mt-2 flex gap-2"><button onClick={() => void download(report)} className="btn-ghost min-h-8 px-2 text-xs"><Download size={14}/>Salvar / compartilhar</button><button onClick={() => void restore(report)} className="btn-secondary min-h-8 px-2 text-xs"><Pencil size={14}/>Editar dados</button></div></div>)}</div></Card>
+  return <Card><div className="mb-3 flex items-center gap-2"><FileText size={17} className="text-brand-600"/><h3 className="font-bold">Relatórios salvos</h3></div><p className="mb-3 text-xs leading-relaxed text-slate-500">O PDF é uma cópia final. Use “Editar dados” para reabrir a visita de origem e gerar uma nova versão.</p><div className="space-y-2">{reports.map(report => <div key={report.id} className="rounded-lg border border-slate-100 p-2"><div className="flex items-center gap-2 text-left text-sm"><FileText size={16} className="shrink-0 text-brand-700"/><span className="min-w-0 flex-1 truncate">{report.filename}</span></div><div className="mt-2 flex gap-2"><button type="button" disabled={workingId === report.id} onClick={() => void download(report)} className="btn-ghost min-h-8 px-2 text-xs">{workingId === report.id ? <Loader2 className="animate-spin" size={14}/> : <Download size={14}/>}Salvar / compartilhar</button><button type="button" disabled={workingId === report.id} onClick={() => void restore(report)} className="btn-secondary min-h-8 px-2 text-xs"><Pencil size={14}/>Editar dados</button></div></div>)}</div></Card>
 }
 
 function PdfPreview({blob,onClose}:{blob:Blob;onClose:()=>void}) {const [url,setUrl]=useState('');useEffect(()=>{const current=URL.createObjectURL(blob);setUrl(current);return()=>URL.revokeObjectURL(current)},[blob]);const share=()=>shareOrDownloadBlob(blob,'relatorio-engedrop.pdf','Relatório Engedrop');return <Modal title="Pré-visualização do relatório" onClose={onClose} wide><div className="h-[55vh] overflow-hidden rounded-xl border border-slate-200">{url&&<iframe className="h-full w-full" src={url} title="Relatório PDF"/>}</div><div className="mt-4 flex justify-end gap-2"><button className="btn-secondary" onClick={()=>void share()}><Download size={17}/>Salvar PDF</button><button className="btn-primary" onClick={()=>void share()}><Share2 size={17}/>Compartilhar</button></div></Modal>}
